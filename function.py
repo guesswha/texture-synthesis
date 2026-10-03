@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import correlate2d
 
 def get_neighborhood(image, x, y, window_size):
     radius = window_size // 2
@@ -121,21 +122,6 @@ def synthesize_texture(image, output_size, window_size, epsilon=0.1):
     # Precompute source texture windows
     # --------------------------------------------------
 
-    image_float = image.astype(
-        np.float32,
-        copy=False
-    )
-
-    source_windows = np.lib.stride_tricks.sliding_window_view(
-        image_float,
-        (window_size, window_size),
-        axis=(0, 1)
-    )
-
-    source_windows = source_windows.transpose(
-        0, 1, 3, 4, 2
-    )
-
     y_start = center_y - radius
     y_end = center_y + radius + 1
 
@@ -176,8 +162,11 @@ def synthesize_texture(image, output_size, window_size, epsilon=0.1):
     # --------------------------------------------------
     # Synthesis loop
     # --------------------------------------------------
-
-    total_pixels = height * width
+    
+    image_float = image.astype(
+        np.float32,
+        copy=False
+    )
 
     while frontier_set:
 
@@ -221,12 +210,11 @@ def synthesize_texture(image, output_size, window_size, epsilon=0.1):
         # --------------------------------------------------
 
         candidates = find_candidates(
-            image,
+            image_float,
             target_neighborhood,
             target_mask,
             window_size,
-            epsilon,
-            windows=source_windows
+            epsilon
         )
 
         if not candidates:
@@ -236,10 +224,11 @@ def synthesize_texture(image, output_size, window_size, epsilon=0.1):
         # Choose best candidate
         # --------------------------------------------------
 
-        candidate = min(
-            candidates,
-            key=lambda item: item[2]
-        )
+        candidate_index = np.random.randint(
+            len(candidates)
+            )
+
+        candidate = candidates[candidate_index]
 
         candidate_x = candidate[0]
         candidate_y = candidate[1]
@@ -376,19 +365,19 @@ def find_candidates(
     target_neighborhood,
     target_mask,
     window_size,
-    epsilon=0.1,
-    chunk_rows=32,
-    windows=None
+    epsilon=0.1
 ):
     """
-    Find candidate patches using masked distance.
+    Find candidate patches using masked SSD.
 
-    Source image windows are reused when `windows`
-    is provided.
+    The masked SSD is calculated using 2D correlation
+    instead of comparing every patch with Python loops.
     """
 
     if window_size % 2 == 0:
-        raise ValueError("window_size must be odd.")
+        raise ValueError(
+            "window_size must be odd."
+        )
 
     if target_neighborhood.shape[:2] != (
         window_size,
@@ -406,101 +395,126 @@ def find_candidates(
             "target_mask has wrong shape."
         )
 
+    # --------------------------------------------------
+    # No known pixels
+    # --------------------------------------------------
+
     if not np.any(target_mask):
         return []
 
-    height, width = image.shape[:2]
-    radius = window_size // 2
-
-    candidate_height = height - window_size + 1
-    candidate_width = width - window_size + 1
-
     # --------------------------------------------------
-    # Create source windows only if not already provided
+    # Convert to float32
     # --------------------------------------------------
 
-    if windows is None:
+    source = image
 
-        image_float = image.astype(
-            np.float32,
-            copy=False
-        )
-
-        windows = np.lib.stride_tricks.sliding_window_view(
-            image_float,
-            (window_size, window_size),
-            axis=(0, 1)
-        )
-
-        windows = windows.transpose(
-            0, 1, 3, 4, 2
-        )
-
-    # --------------------------------------------------
-    # Target
-    # --------------------------------------------------
-
-    target_float = target_neighborhood.astype(
+    target = target_neighborhood.astype(
         np.float32,
         copy=False
     )
 
-    target_known = target_float[target_mask]
-
-    # --------------------------------------------------
-    # Store distances
-    # --------------------------------------------------
-
-    distances = np.empty(
-        (candidate_height, candidate_width),
-        dtype=np.float32
+    mask = target_mask.astype(
+        np.float32
     )
 
     # --------------------------------------------------
-    # Calculate distances
+    # Number of known pixels
     # --------------------------------------------------
 
-    for row_start in range(
-        0,
-        candidate_height,
-        chunk_rows
-    ):
-
-        row_end = min(
-            row_start + chunk_rows,
-            candidate_height
-        )
-
-        chunk = windows[
-            row_start:row_end
-        ]
-
-        chunk_known = chunk[
-            :, :, target_mask, :
-        ]
-
-        difference = (
-            chunk_known
-            - target_known
-        )
-
-        pixel_error = np.sum(
-            difference * difference,
-            axis=3
-        )
-
-        distances[
-            row_start:row_end
-        ] = np.mean(
-            pixel_error,
-            axis=2
-        )
+    known_count = np.sum(mask)
 
     # --------------------------------------------------
-    # Find threshold
+    # Constant term:
+    #
+    # sum(mask * target^2)
     # --------------------------------------------------
 
-    min_distance = np.min(distances)
+    target_squared = (
+        target ** 2
+    )
+
+    constant = np.sum(
+        target_squared * mask[:, :, None]
+    )
+
+    # --------------------------------------------------
+    # Distance map
+    # --------------------------------------------------
+
+    distance_map = None
+
+    for channel in range(3):
+
+        source_channel = source[:, :, channel]
+
+        target_channel = target[:, :, channel]
+
+        # --------------------------------------------------
+        # sum(mask * source^2)
+        # --------------------------------------------------
+
+        source_squared = (
+            source_channel ** 2
+        )
+
+        term_a = correlate2d(
+            source_squared,
+            mask,
+            mode="valid"
+        )
+
+        # --------------------------------------------------
+        # sum(mask * source * target)
+        # --------------------------------------------------
+
+        target_masked = (
+            target_channel * mask
+        )
+
+        term_b = correlate2d(
+            source_channel,
+            target_masked,
+            mode="valid"
+        )
+
+        # --------------------------------------------------
+        # SSD:
+        #
+        # A - 2B + C
+        # --------------------------------------------------
+
+        channel_distance = (
+            term_a
+            - 2.0 * term_b
+        )
+
+        if distance_map is None:
+            distance_map = channel_distance
+        else:
+            distance_map += channel_distance
+
+    distance_map += constant
+
+    # --------------------------------------------------
+    # Mean masked SSD
+    # --------------------------------------------------
+
+    distance_map /= known_count
+
+    # Numerical precision can sometimes produce
+    # tiny negative values.
+    distance_map = np.maximum(
+        distance_map,
+        0
+    )
+
+    # --------------------------------------------------
+    # Find minimum distance
+    # --------------------------------------------------
+
+    min_distance = np.min(
+        distance_map
+    )
 
     threshold = (
         min_distance * (1 + epsilon)
@@ -511,12 +525,10 @@ def find_candidates(
     # --------------------------------------------------
 
     rows, cols = np.where(
-        distances <= threshold
+        distance_map <= threshold
     )
 
-    # --------------------------------------------------
-    # Convert to coordinates
-    # --------------------------------------------------
+    radius = window_size // 2
 
     candidates = []
 
@@ -525,12 +537,12 @@ def find_candidates(
         x = int(col + radius)
         y = int(row + radius)
 
+        distance = float(
+            distance_map[row, col]
+        )
+
         candidates.append(
-            (
-                x,
-                y,
-                float(distances[row, col])
-            )
+            (x, y, distance)
         )
 
     return candidates
