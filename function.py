@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from scipy.signal import correlate2d
 
 def get_neighborhood(image, x, y, window_size):
@@ -365,7 +366,8 @@ def find_candidates(
     target_neighborhood,
     target_mask,
     window_size,
-    epsilon=0.1
+    epsilon=0.1,
+    profile=False
 ):
     """
     Find candidate patches using masked SSD.
@@ -406,6 +408,8 @@ def find_candidates(
     # Convert to float32
     # --------------------------------------------------
 
+    profile_start = time.perf_counter()
+
     source = image
 
     target = target_neighborhood.astype(
@@ -416,6 +420,8 @@ def find_candidates(
     mask = target_mask.astype(
         np.float32
     )
+
+    prepare_time = time.perf_counter() - profile_start
 
     # --------------------------------------------------
     # Number of known pixels
@@ -441,6 +447,9 @@ def find_candidates(
     # Distance map
     # --------------------------------------------------
 
+    term_a_time = 0.0
+    term_b_time = 0.0
+
     distance_map = None
 
     for channel in range(3):
@@ -457,11 +466,15 @@ def find_candidates(
             source_channel ** 2
         )
 
+        start = time.perf_counter()
+
         term_a = correlate2d(
             source_squared,
             mask,
             mode="valid"
         )
+
+        term_a_time += time.perf_counter() - start
 
         # --------------------------------------------------
         # sum(mask * source * target)
@@ -471,11 +484,15 @@ def find_candidates(
             target_channel * mask
         )
 
+        start = time.perf_counter()
+
         term_b = correlate2d(
             source_channel,
             target_masked,
             mode="valid"
         )
+
+        term_b_time += time.perf_counter() - start
 
         # --------------------------------------------------
         # SSD:
@@ -524,6 +541,8 @@ def find_candidates(
     # Find candidates
     # --------------------------------------------------
 
+    distance_end_time = time.perf_counter()
+    
     rows, cols = np.where(
         distance_map <= threshold
     )
@@ -543,6 +562,30 @@ def find_candidates(
 
         candidates.append(
             (x, y, distance)
+        )
+
+    if profile:
+        total_time = (
+            time.perf_counter()
+            - profile_start
+        )
+
+        print("\n--- find_candidates profiling ---")
+        print(
+            f"Preparation:    {prepare_time:.6f} s"
+        )
+        print(
+            f"correlate2d A:  {term_a_time:.6f} s"
+        )
+        print(
+            f"correlate2d B:  {term_b_time:.6f} s"
+        )
+        print(
+            f"Distance/rest:  "
+            f"{distance_end_time - profile_start - prepare_time - term_a_time - term_b_time:.6f} s"
+        )
+        print(
+            f"Total:          {total_time:.6f} s"
         )
 
     return candidates

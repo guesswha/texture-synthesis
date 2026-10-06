@@ -16,36 +16,124 @@ image = np.array(image)
 # Test synthesize_texture
 # =========================
 
+# ============================================================
+# Profile one find_candidates()
+# ============================================================
+
 output_size = (100, 100)
 window_size = 5
 
-start_time = time.perf_counter()
+# ------------------------------------------------------------
+# Create a small output
+# ------------------------------------------------------------
 
-output, known_mask = synthesize_texture(
+output = np.zeros(
+    (100, 100, 3),
+    dtype=np.uint8
+)
+
+known_mask = np.zeros(
+    (100, 100),
+    dtype=bool
+)
+
+# ------------------------------------------------------------
+# Create seed
+# ------------------------------------------------------------
+
+source_x = image.shape[1] // 2
+source_y = image.shape[0] // 2
+
+seed = get_neighborhood(
     image,
-    output_size,
+    source_x,
+    source_y,
     window_size
 )
 
-print("\n--- Texture Synthesis Result ---")
+radius = window_size // 2
 
-print("Output shape:", output.shape)
+center_x = 50
+center_y = 50
 
-print("Expected pixels:", output_size[0] * output_size[1])
+y_start = center_y - radius
+y_end = center_y + radius + 1
 
-print("Known pixels:", np.sum(known_mask))
+x_start = center_x - radius
+x_end = center_x + radius + 1
 
-print("Unknown pixels:", np.sum(~known_mask))
+output[
+    y_start:y_end,
+    x_start:x_end
+] = seed
 
-result = Image.fromarray(output)
+known_mask[
+    y_start:y_end,
+    x_start:x_end
+] = True
 
-result.save("texture_result.png")
+# ------------------------------------------------------------
+# Find one frontier pixel
+# ------------------------------------------------------------
 
-print("Saved: texture_result.png")
+frontier = find_frontier_pixels(
+    known_mask
+)
 
-end_time = time.perf_counter()
+x, y = frontier[0]
+
+print("\n--- Profiling one frontier pixel ---")
+print("Target pixel:", (x, y))
+
+# ------------------------------------------------------------
+# Get target neighborhood
+# ------------------------------------------------------------
+
+target_neighborhood = get_neighborhood(
+    output,
+    x,
+    y,
+    window_size
+)
+
+target_mask = get_neighborhood(
+    known_mask,
+    x,
+    y,
+    window_size
+)
+
+# ------------------------------------------------------------
+# Prepare source once
+# ------------------------------------------------------------
+
+image_float = image.astype(
+    np.float32,
+    copy=False
+)
+
+# ------------------------------------------------------------
+# Profile find_candidates
+# ------------------------------------------------------------
+
+start = time.perf_counter()
+
+candidates = find_candidates(
+    image_float,
+    target_neighborhood,
+    target_mask,
+    window_size,
+    epsilon=0.1,
+    profile=True
+)
+
+total = time.perf_counter() - start
 
 print(
-    f"Synthesis time: "
-    f"{end_time - start_time:.2f} seconds"
+    f"\nExternal timing: {total:.6f} s"
+)
+
+print(
+    "Number of candidates:",
+    len(candidates)
 )
