@@ -26,7 +26,7 @@ image = np.array(image)
 # Texture synthesis setup
 # ============================================================
 
-output_size = (100, 100)
+output_size = (30, 30)
 window_size = 5
 epsilon = 0.1
 
@@ -105,6 +105,7 @@ print(
 # ============================================================
 
 output_path = Path(
+    "images",
     f"texture_result_{output_size[0]}x{output_size[1]}.png"
 )
 
