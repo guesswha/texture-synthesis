@@ -1,139 +1,118 @@
 import time
+
 from PIL import Image
 import numpy as np
 from pathlib import Path
-from function import get_neighborhood, calculate_distance, synthesize_texture, find_frontier_pixels, calculate_masked_distance, find_candidates
 
-# =========================
-# Read image
-# =========================
+from function import synthesize_texture
 
-IMAGE_PATH = Path("images") / "texture 1.png"
-image = Image.open(IMAGE_PATH).convert("RGB")
-image = np.array(image)
-
-# =========================
-# Test synthesize_texture
-# =========================
 
 # ============================================================
-# Profile one find_candidates()
+# Read image
+# ============================================================
+
+IMAGE_PATH = Path(
+    "images"
+) / "texture 1.png"
+
+image = Image.open(
+    IMAGE_PATH
+).convert("RGB")
+
+image = np.array(image)
+
+
+# ============================================================
+# Texture synthesis setup
 # ============================================================
 
 output_size = (100, 100)
 window_size = 5
+epsilon = 0.1
 
-# ------------------------------------------------------------
-# Create a small output
-# ------------------------------------------------------------
 
-output = np.zeros(
-    (100, 100, 3),
-    dtype=np.uint8
-)
+# ============================================================
+# Run Texture Synthesis
+# ============================================================
 
-known_mask = np.zeros(
-    (100, 100),
-    dtype=bool
-)
+print("\n--- Texture Synthesis ---")
+print("Input shape:", image.shape)
+print("Output size:", output_size)
+print("Window size:", window_size)
 
-# ------------------------------------------------------------
-# Create seed
-# ------------------------------------------------------------
+start_time = time.perf_counter()
 
-source_x = image.shape[1] // 2
-source_y = image.shape[0] // 2
-
-seed = get_neighborhood(
+output, known_mask = synthesize_texture(
     image,
-    source_x,
-    source_y,
-    window_size
-)
-
-radius = window_size // 2
-
-center_x = 50
-center_y = 50
-
-y_start = center_y - radius
-y_end = center_y + radius + 1
-
-x_start = center_x - radius
-x_end = center_x + radius + 1
-
-output[
-    y_start:y_end,
-    x_start:x_end
-] = seed
-
-known_mask[
-    y_start:y_end,
-    x_start:x_end
-] = True
-
-# ------------------------------------------------------------
-# Find one frontier pixel
-# ------------------------------------------------------------
-
-frontier = find_frontier_pixels(
-    known_mask
-)
-
-x, y = frontier[0]
-
-print("\n--- Profiling one frontier pixel ---")
-print("Target pixel:", (x, y))
-
-# ------------------------------------------------------------
-# Get target neighborhood
-# ------------------------------------------------------------
-
-target_neighborhood = get_neighborhood(
-    output,
-    x,
-    y,
-    window_size
-)
-
-target_mask = get_neighborhood(
-    known_mask,
-    x,
-    y,
-    window_size
-)
-
-# ------------------------------------------------------------
-# Prepare source once
-# ------------------------------------------------------------
-
-image_float = image.astype(
-    np.float32,
-    copy=False
-)
-
-# ------------------------------------------------------------
-# Profile find_candidates
-# ------------------------------------------------------------
-
-start = time.perf_counter()
-
-candidates = find_candidates(
-    image_float,
-    target_neighborhood,
-    target_mask,
+    output_size,
     window_size,
-    epsilon=0.1,
-    profile=True
+    epsilon
 )
 
-total = time.perf_counter() - start
+end_time = time.perf_counter()
+
+
+# ============================================================
+# Results
+# ============================================================
+
+synthesis_time = (
+    end_time - start_time
+)
+
+print("\n--- Texture Synthesis Result ---")
 
 print(
-    f"\nExternal timing: {total:.6f} s"
+    "Output shape:",
+    output.shape
+)
+
+expected_pixels = (
+    output_size[0] * output_size[1]
+)
+
+known_pixels = int(
+    np.sum(known_mask)
+)
+
+unknown_pixels = (
+    expected_pixels - known_pixels
 )
 
 print(
-    "Number of candidates:",
-    len(candidates)
+    "Expected pixels:",
+    expected_pixels
+)
+
+print(
+    "Known pixels:",
+    known_pixels
+)
+
+print(
+    "Unknown pixels:",
+    unknown_pixels
+)
+
+print(
+    f"Synthesis time: "
+    f"{synthesis_time:.2f} seconds"
+)
+
+
+# ============================================================
+# Save result
+# ============================================================
+
+output_path = Path(
+    f"texture_result_{output_size[0]}x{output_size[1]}.png"
+)
+
+Image.fromarray(output).save(
+    output_path
+)
+
+print(
+    "Saved:",
+    output_path
 )
